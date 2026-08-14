@@ -1,7 +1,7 @@
 {
   "name": "@kelearns/dsh-token-usage",
   "description": "Token usage heatmap for the dsh web GUI: GitHub-style daily / weekly / cumulative token statistics with hover details, mounted via the official plugin mechanism (dsh plugin add) — no dsh source changes.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -46,7 +46,8 @@
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
-    "LICENSE"
+    "LICENSE",
+    "screenshots"
   ],
   "license": "MIT"
 }

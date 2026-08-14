@@ -8,11 +8,29 @@ DeepSeek Harness（dsh）Web GUI 的 Token 用量热力图插件：GitHub 风格
 
 安装后在设置页侧边栏出现「Token 活动」入口。
 
+## 界面预览
+
+**每日热力图 — 深色主题、简体中文（默认 12 个月窗口）**
+
+<img src="screenshots/promo-zh-dark-daily.png" width="612" alt="每日 Token 用量热力图（深色、简体中文）">
+
+**三种视图 — 深色主题、简体中文**
+
+| 每日 | 每周 | 累计 |
+|:---:|:---:|:---:|
+| <img src="screenshots/promo-zh-dark-daily.png" width="200" alt="每日视图"> | <img src="screenshots/promo-zh-dark-weekly.png" width="200" alt="每周视图"> | <img src="screenshots/promo-zh-dark-cum.png" width="200" alt="累计视图"> |
+
+**浅色主题与英文界面**
+
+| 浅色主题（简体中文） | Light theme (English) |
+|:---:|:---:|
+| <img src="screenshots/promo-zh-light-daily.png" width="300" alt="浅色主题"> | <img src="screenshots/promo-en-dark-daily.png" width="300" alt="英文界面"> |
+
 ## 功能
 
 - **汇总气泡**：单个圆角容器 + 竖线分割的 5 项统计（累计 / 峰值日 / 最长会话 / 当前连续 / 最长连续天数）；
 - **三种视图**：每日（按天分级取色）、每周（周总量 ÷ (最大周/7) 得格数，底部堆叠、统一最深色）、累计（截止各周累计 ÷ (总量/7) 得格数，最新列必满 7 格）；
-- **窗口切换**：近 3 / 6 / 12 个月（默认 6）；固定 12px 方格，12 个月横向滚动并自动滚到最新一周；
+- **窗口切换**：近 3 / 6 / 12 个月（默认 12）；固定 12px 方格，12 个月横向滚动并自动滚到最新一周；
 - **悬停详情**：「M月D日 使用了 X 个 Token」/「当周使用了 X 个 Token」/「截至 X 当周累计使用 X 个 Token」；
 - **活动洞察**：最常使用的模型 / 推理强度 / 工具、最活跃时段、日均与月均用量、最常用的星期、最活跃的一天；按标签字数排序，两列等宽 + 连续中心分界线；
 - **i18n**：中 / 英文，跟随文档语言实时切换；

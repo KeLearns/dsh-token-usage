@@ -13,6 +13,24 @@ official dsh plugin mechanism (`dsh plugin add`) — no dsh source changes.
 
 A "Token Activity" entry appears in the settings sidebar.
 
+## Screenshots
+
+**Daily heatmap — dark theme, English (12-month window)**
+
+<img src="screenshots/promo-en-dark-daily.png" width="612" alt="Daily token usage heatmap, dark theme, English">
+
+**Three views — dark theme, English**
+
+| Daily | Weekly | Cumulative |
+|:---:|:---:|:---:|
+| <img src="screenshots/promo-en-dark-daily.png" width="200" alt="Daily view"> | <img src="screenshots/promo-en-dark-weekly.png" width="200" alt="Weekly view"> | <img src="screenshots/promo-en-dark-cum.png" width="200" alt="Cumulative view"> |
+
+**Light theme & Chinese UI**
+
+| Light (English) | 深色主题（简体中文） |
+|:---:|:---:|
+| <img src="screenshots/promo-en-light-daily.png" width="300" alt="Light theme, English"> | <img src="screenshots/promo-zh-dark-daily.png" width="300" alt="Dark theme, Chinese"> |
+
 ## Features
 
 - **Summary bubble** — one rounded container with 5 statistics divided by
@@ -20,7 +38,7 @@ A "Token Activity" entry appears in the settings sidebar.
 - **Three views** — Daily (per-day color levels), Weekly (per-week stacked
   cells: week total ÷ (max week / 7) cells, deepest color), Cumulative
   (per-week cumulative stack: total ÷ 7 per cell, newest column always full);
-- **Window switch** — last 3 / 6 / 12 months (default 6); fixed 12px cells,
+- **Window switch** — last 3 / 6 / 12 months (default 12); fixed 12px cells,
   12-month view scrolls horizontally and auto-scrolls to the latest week;
 - **Hover details** — hovering a cell shows that day's total, that week's
   total, or the week-to-date cumulative as of that day (localized zh/en);
