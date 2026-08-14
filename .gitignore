@@ -1,0 +1,11 @@
+# dependencies
+node_modules/
+
+# local preview tooling (renders the UI with bundled React for screenshot testing)
+test/layout-preview.html
+
+# showcase / test screenshots (local only, not shipped)
+screenshots/
+
+# logs
+*.log
