@@ -64,6 +64,9 @@ From npm (recommended):
 dsh plugin --profile web add @kelearns/dsh-token-usage
 ```
 
+> Listed in [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) curated registry;
+> also searchable as `token-usage` in the **Plugin Market** tab of dsh settings ([dsh-market](https://github.com/dsh-market/dsh-market)).
+
 Local development install (run from this repository's root — `link:.`
 resolves to the current directory):
 

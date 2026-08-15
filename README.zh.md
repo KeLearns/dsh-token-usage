@@ -52,6 +52,9 @@ npm install -g pnpm
 dsh plugin --profile web add @kelearns/dsh-token-usage
 ```
 
+> 已收录于 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 精选目录，
+> 也可以在 dsh 设置页的 **Plugin Market**（[dsh-market](https://github.com/dsh-market/dsh-market)）中搜索 `token-usage` 一键安装。
+
 本地开发安装（在仓库根目录执行，`link:.` 解析为当前目录）：
 
 ```powershell
