@@ -194,6 +194,41 @@ window.__ModuleLoader__.load({
     /** 周一=0 … 周日=6 */
     const dow = (date) => (date.getDay() + 6) % 7
 
+    /**
+     * Map one visible window's weekly totals to a cumulative 1..7-cell staircase.
+     * The first active week is the 1-cell baseline; the final cumulative value is
+     * the 7-cell target. Limit each week's rise to one cell so a late surge can
+     * remain below 7 at the end of the window. This mapping never changes the
+     * exact cumulative values used by hover details.
+     */
+    function cumulativeFillCounts(weekTotals) {
+      const cumulative = []
+      let total = 0
+      let firstActive = -1
+      for (let i = 0; i < weekTotals.length; i++) {
+        const value = weekTotals[i]
+        total += value
+        cumulative.push(total)
+        if (firstActive < 0 && value > 0) firstActive = i
+      }
+
+      const fills = Array(weekTotals.length).fill(0)
+      if (firstActive < 0) return fills
+
+      const baseline = cumulative[firstActive]
+      const growth = cumulative[cumulative.length - 1] - baseline
+      let actual = 1
+      fills[firstActive] = actual
+      for (let i = firstActive + 1; i < weekTotals.length; i++) {
+        const raw = growth > 0
+          ? Math.max(1, Math.min(7, Math.round(1 + 6 * (cumulative[i] - baseline) / growth)))
+          : 1
+        actual = Math.max(actual, Math.min(raw, actual + 1))
+        fills[i] = actual
+      }
+      return fills
+    }
+
     /** 当前界面语言是否为英文（跟随 DSH 语言设置，经 locale 同步到 documentElement.lang） */
     const isEn = () => typeof document !== 'undefined' && (document.documentElement.lang || '').toLowerCase().startsWith('en')
     const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -347,17 +382,17 @@ window.__ModuleLoader__.load({
             if (v > max) max = v
           }
         }
-        // 排布算法（每周/累计视图）：总量 ÷ 7 = 单位量；列格数 = ceil(列值/单位量)，1~7 格
-        // 每周：列值 = 该周总量，单位 = 窗口内最大周 ÷ 7（最高周满 7 格）
-        // 累计：列值 = 截止该列最后一天的全历史累计，单位 = 全历史总量 ÷ 7。
-        // 3/6/12 月只裁剪显示范围，不改变累计基线。
+        // 每周视图：该周总量 ÷ (窗口内最大周 / 7)，最高周满 7 格。
+        // 累计格数对当前窗口的周桶统一调用阶梯映射；精确累计仍单独由 cumAll 提供给悬停。
         let maxWeek = 0
+        const weekValues = []
         for (let col = 0; col < weeks; col++) {
           const wv = weekVal(addDays(start, col * 7))
+          weekValues.push(wv)
           if (wv > maxWeek) maxWeek = wv
         }
         const unitWeekly = maxWeek / 7
-        const unitCum = data.totals ? data.totals.all / 7 : 0
+        const cumulativeFills = cumulativeFillCounts(weekValues)
 
         // 月份标签候选：每月首日所在列（渲染时按像素间距过滤，避免标签重叠）
         const months = []
@@ -374,7 +409,7 @@ window.__ModuleLoader__.load({
         return {
           start, end, weeks, today: toKey(today), byDay,
           valueOf, dayVal, weekVal, cumAll, max,
-          maxWeek, unitWeekly, unitCum,
+          maxWeek, unitWeekly, cumulativeFills,
           months, totalDays,
         }
       }, [data, tab, range])
@@ -466,9 +501,7 @@ window.__ModuleLoader__.load({
         }
       } else if (tab === 'cum') {
         for (let col = 0; col < model.weeks; col++) {
-          const candidate = addDays(model.start, col * 7 + 6)
-          const lastD = dayOrdinal(candidate) > dayOrdinal(model.end) ? model.end : candidate
-          colFills.push(fillOf(model.cumAll(lastD), model.unitCum))
+          colFills.push(model.cumulativeFills[col])
         }
       }
       const gridStyle = {

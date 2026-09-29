@@ -38,7 +38,9 @@ A "Token Activity" entry appears in the settings sidebar.
   vertical rules: total / peak-day / longest session / current streak / longest streak;
 - **Three views** — Daily (per-day color levels), Weekly (per-week stacked
   cells: week total ÷ (max week / 7) cells, deepest color), Cumulative
-  (per-week cumulative stack: total ÷ 7 per cell, newest column always full);
+  (per-window cumulative staircase: first active week starts at 1 cell, earlier
+  weeks stay blank, and each week's count rises by at most 1 up to 7; the latest
+  week may remain below 7);
 - **Window switch** — last 3 / 6 / 12 months (default 12); fixed 12px cells,
   12-month view scrolls horizontally and auto-scrolls to the latest week;
 - **Hover details** — hovering a cell shows that day's total, that week's
@@ -121,6 +123,13 @@ days and months with reported usage.
 Per-session folds are cached by DSH's opaque persistence revision. A scan
 re-reads only changed sessions. To bound work, it scans at most the 20,000
 most recently created sessions and reports when older sessions were omitted.
+
+The cumulative heatmap maps weekly totals within the selected 3 / 6 / 12-month
+window to one shared staircase: the first active week's exact cumulative value
+is the 1-cell baseline and the latest week's value is the 7-cell target, with
+each week's increase limited to one cell. The latest week can therefore remain
+below 7. Hover details still show the exact all-history cumulative token total
+through the hovered date.
 
 ## Routes (same-origin)
 
