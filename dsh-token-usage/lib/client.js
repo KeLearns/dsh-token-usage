@@ -6,7 +6,7 @@
  * 三个视图 Tab：每日 / 每周 / 累计；悬停单元格显示：
  *   每日 → "M月D日 使用了 X 个 Token"
  *   每周 → "YYYY年M月D日 当周使用了 X 个 Token"（该周结束日）
- *   累计 → "截至 YYYY年M月D日 当周累计使用 X 个 Token"（周一~当日累计）
+ *   累计 → "截至 YYYY年M月D日 累计使用 X 个 Token"（全历史累计）
  * 数字使用中文单位（万/亿，一位小数）。样式跟随 --dsw-alias-* token，
  * 深浅主题各一套蓝色色阶（CSS 自注入 <style data-plugin-css>）。
  */
@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
       dark: ['#353a40', '#14334a', '#1a5182', '#1f74b5', '#2f9fe8', '#6ec2ff'],
     }
 
-    // ── i18n：zh/en 字典（zh 为源语言），按 documentElement.lang 选择（dsh-ssh 先例）──
+    // ── i18n：zh/en 字典，交给 DSH locale service 管理 ──
     const I18N = {
       zh: {
         'title': 'Token 活动',
@@ -33,20 +33,21 @@ window.__ModuleLoader__.load({
         'summary.longest': '最长聊天时长', 'summary.currentStreak': '当前连续天数',
         'summary.longestStreak': '最长连续天数',
         'foot.updated': '更新于 {time}', 'foot.updating': '更新中…',
+        'foot.partial': '检查 {checked} 个会话：{included} 个可读，{errors} 个读取失败，另有 {truncated} 个较早会话未扫描',
         'legend.less': '少', 'legend.more': '多',
         'insights.title': '活动洞察',
         'insight.model': '最常使用的模型', 'insight.reasoning': '最常用的推理强度',
         'insight.tool': '最常用的工具', 'insight.hour': '最活跃时段',
-        'insight.avgDaily': '日均用量', 'insight.avgMonthly': '月均用量',
+        'insight.avgDaily': '活跃日均用量', 'insight.avgMonthly': '活跃月均用量',
         'insight.weekday': '最常用的星期', 'insight.day': '最活跃的一天',
         'hour.value': '{h}时', 'day.unit': '天',
         'weekday.0': '周日', 'weekday.1': '周一', 'weekday.2': '周二', 'weekday.3': '周三',
         'weekday.4': '周四', 'weekday.5': '周五', 'weekday.6': '周六',
-        'loading': '统计中…', 'empty': '暂无 Token 用量数据（尚未产生任何会话用量，或会话目录为空）',
+        'loading': '统计中…', 'empty': '暂无 Token 用量数据（尚未报告用量，或当前统计范围内没有会话）',
         'error': '加载失败：{msg}',
         'tip.daily': '{date} 使用了 {v} 个 Token', 'tip.daily.zero': '{date} 无 Token 使用',
         'tip.weekly': '{md} 当周使用了 {v} 个 Token', 'tip.weekly.zero': '{md} 当周无 Token 使用',
-        'tip.cum': '截至 {md} 当周累计使用 {v} 个 Token', 'tip.cum.zero': '截至 {md} 当周暂无累计使用',
+        'tip.cum': '截至 {md} 累计使用 {v} 个 Token', 'tip.cum.zero': '截至 {md} 暂无累计使用',
       },
       en: {
         'title': 'Token Activity',
@@ -56,16 +57,17 @@ window.__ModuleLoader__.load({
         'summary.longest': 'Longest Session', 'summary.currentStreak': 'Current Streak',
         'summary.longestStreak': 'Longest Streak',
         'foot.updated': 'Updated {time}', 'foot.updating': 'Updating…',
+        'foot.partial': 'Checked {checked} sessions: {included} readable, {errors} failed, {truncated} older sessions skipped',
         'legend.less': 'Less', 'legend.more': 'More',
         'insights.title': 'Insights',
         'insight.model': 'Most used model', 'insight.reasoning': 'Most used reasoning',
         'insight.tool': 'Most used tool', 'insight.hour': 'Peak hour',
-        'insight.avgDaily': 'Daily average', 'insight.avgMonthly': 'Monthly average',
+        'insight.avgDaily': 'Average per active day', 'insight.avgMonthly': 'Average per active month',
         'insight.weekday': 'Most active weekday', 'insight.day': 'Most active day',
         'hour.value': '{h}:00', 'day.unit': 'days',
         'weekday.0': 'Sunday', 'weekday.1': 'Monday', 'weekday.2': 'Tuesday', 'weekday.3': 'Wednesday',
         'weekday.4': 'Thursday', 'weekday.5': 'Friday', 'weekday.6': 'Saturday',
-        'loading': 'Loading…', 'empty': 'No token usage data yet (no usage recorded, or the session directory is empty)',
+        'loading': 'Loading…', 'empty': 'No token usage data yet (no usage reported, or no sessions are available)',
         'error': 'Load failed: {msg}',
         'tip.daily': '{date} used {v} tokens', 'tip.daily.zero': '{date} no token usage',
         'tip.weekly': '{md} week used {v} tokens', 'tip.weekly.zero': '{md} week, no token usage',
@@ -73,7 +75,7 @@ window.__ModuleLoader__.load({
       },
     }
     /** 按当前文档语言翻译；{name} 模板插值 */
-    const tt = (key, values) => {
+    const fallbackTranslate = (key, values) => {
       const lang = typeof document !== 'undefined' && document.documentElement
         ? (document.documentElement.lang || '').toLowerCase()
         : 'zh'
@@ -159,9 +161,9 @@ window.__ModuleLoader__.load({
 .dthm-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(38,49,72,.06))}
 .dthm-btn:disabled{opacity:.45;cursor:not-allowed}`
     // 版本化自愈注入：模块热重载/旧样式残留时按版本号重写，避免新旧 CSS 混用
-    const CSS_VERSION = '0.1.0'
+    const CSS_VERSION = '0.2.0'
     const ensureCss = () => {
-      if (typeof document === 'undefined') return
+      if (typeof document === 'undefined') return () => {}
       let tag = document.querySelector('style[data-plugin-css="dsh-token-usage/styles"]')
       if (!tag) {
         tag = document.createElement('style')
@@ -173,12 +175,14 @@ window.__ModuleLoader__.load({
         tag.textContent = PLUGIN_CSS
         tag.dataset.pluginVersion = CSS_VERSION
       }
+      return () => tag.remove()
     }
-    ensureCss()
 
     // ── 工具函数 ──
     const h = React.createElement
-    const DAY_MS = 86400000
+    const MS_PER_DAY = 86400000
+    const addDays = (date, count) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + count)
+    const dayOrdinal = (date) => Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MS_PER_DAY)
     const pad = (n) => String(n).padStart(2, '0')
 
     /** YYYY-MM-DD（本地时区）→ Date（本地零点） */
@@ -234,15 +238,15 @@ window.__ModuleLoader__.load({
         return data
       })
 
-    function HeatmapSection() {
+    function HeatmapSection(props) {
+      const tt = props && typeof props.t === 'function' ? props.t : fallbackTranslate
       const [tab, setTab] = useState('daily')
-      const [data, setData] = useState(null) // { days:[{d,i,o,c,a}], totals, today, generatedAt }
+      const [data, setData] = useState(null) // { days:[{d,i,o,c,w,a}], totals, today, generatedAt }
       const [loading, setLoading] = useState(true)
       const [error, setError] = useState('')
       const [hover, setHover] = useState(null) // { key, left, top, text }
       const [dark, setDark] = useState(readDark)
-      const [range, setRange] = useState(12) // 窗口：近 3/6/12 个月，默认 12（展示全部历史）
-      const [lang, setLang] = useState(typeof document !== 'undefined' ? (document.documentElement.lang || 'zh') : 'zh')
+      const [range, setRange] = useState(12) // 可见窗口：近 3/6/12 个月；累计值仍按全历史计算
       const chartRef = useRef(null)
       const cardRef = useRef(null)
       const seqRef = useRef(0)
@@ -278,15 +282,9 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         const apply = () => {
           setDark(readDark())
-          const l = document.documentElement.lang || 'zh'
-          if (l !== langRef.current) {
-            langRef.current = l
-            setLang(l)
-          }
         }
-        const langRef = { current: typeof document !== 'undefined' ? (document.documentElement.lang || 'zh') : 'zh' }
         const observer = new MutationObserver(apply)
-        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme', 'lang'] })
+        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] })
         let mq = null
         if (typeof matchMedia !== 'undefined') {
           mq = matchMedia('(prefers-color-scheme: dark)')
@@ -302,10 +300,16 @@ window.__ModuleLoader__.load({
       const model = useMemo(() => {
         if (!data || !data.days || data.days.length === 0) return null
         const today = parseDay(data.today)
-        const start = new Date(today.getFullYear(), today.getMonth() - range, today.getDate())
-        while (dow(start) !== 0) start.setTime(start.getTime() - DAY_MS)
+        const rangeMonth = new Date(today.getFullYear(), today.getMonth() - range, 1)
+        const rangeMonthLastDay = new Date(rangeMonth.getFullYear(), rangeMonth.getMonth() + 1, 0).getDate()
+        const start = new Date(
+          rangeMonth.getFullYear(), rangeMonth.getMonth(), Math.min(today.getDate(), rangeMonthLastDay),
+        )
+        while (dow(start) !== 0) start.setDate(start.getDate() - 1)
         const end = today
-        const totalDays = Math.floor((end.getTime() - start.getTime()) / DAY_MS) + 1
+        const startOrdinal = dayOrdinal(start)
+        const endOrdinal = dayOrdinal(end)
+        const totalDays = endOrdinal - startOrdinal + 1
         const weeks = Math.ceil(totalDays / 7)
 
         const byDay = new Map()
@@ -314,10 +318,10 @@ window.__ModuleLoader__.load({
         // 每日/每周/累计 取值函数
         const dayVal = (d) => { const r = byDay.get(toKey(d)); return r ? r.a : 0 }
         const weekVal = (d) => {
-          const monday = new Date(d.getTime() - dow(d) * DAY_MS)
+          const monday = addDays(d, -dow(d))
           let sum = 0
           for (let i = 0; i < 7; i++) {
-            const r = byDay.get(toKey(new Date(monday.getTime() + i * DAY_MS)))
+            const r = byDay.get(toKey(addDays(monday, i)))
             if (r) sum += r.a
           }
           return sum
@@ -328,16 +332,6 @@ window.__ModuleLoader__.load({
           for (const [k, r] of byDay) if (k <= key) sum += r.a
           return sum
         }
-        const weekToDate = (d) => {
-          const monday = new Date(d.getTime() - dow(d) * DAY_MS)
-          let sum = 0
-          for (let i = 0; i <= dow(d); i++) {
-            const r = byDay.get(toKey(new Date(monday.getTime() + i * DAY_MS)))
-            if (r) sum += r.a
-          }
-          return sum
-        }
-
         // 各 tab 的单元格数值与最大值（取色用）
         const valueOf = (d) => {
           if (tab === 'daily') return dayVal(d)
@@ -347,18 +341,19 @@ window.__ModuleLoader__.load({
         let max = 0
         for (let col = 0; col < weeks; col++) {
           for (let row = 0; row < 7; row++) {
-            const d = new Date(start.getTime() + (col * 7 + row) * DAY_MS)
-            if (d.getTime() > end.getTime()) continue
+            const d = addDays(start, col * 7 + row)
+            if (dayOrdinal(d) > endOrdinal) continue
             const v = valueOf(d)
             if (v > max) max = v
           }
         }
         // 排布算法（每周/累计视图）：总量 ÷ 7 = 单位量；列格数 = ceil(列值/单位量)，1~7 格
         // 每周：列值 = 该周总量，单位 = 窗口内最大周 ÷ 7（最高周满 7 格）
-        // 累计：列值 = 截止该列最后一天的累计，单位 = 全历史总量 ÷ 7（最新列必满 7 格）
+        // 累计：列值 = 截止该列最后一天的全历史累计，单位 = 全历史总量 ÷ 7。
+        // 3/6/12 月只裁剪显示范围，不改变累计基线。
         let maxWeek = 0
         for (let col = 0; col < weeks; col++) {
-          const wv = weekVal(new Date(start.getTime() + col * 7 * DAY_MS))
+          const wv = weekVal(addDays(start, col * 7))
           if (wv > maxWeek) maxWeek = wv
         }
         const unitWeekly = maxWeek / 7
@@ -366,19 +361,19 @@ window.__ModuleLoader__.load({
 
         // 月份标签候选：每月首日所在列（渲染时按像素间距过滤，避免标签重叠）
         const months = []
-        const cursor = new Date(start.getTime())
-        while (cursor.getTime() <= end.getTime()) {
-          const firstOfMonth = new Date(cursor.getFullYear(), cursor.getMonth(), 1)
-          if (firstOfMonth.getTime() >= start.getTime() && firstOfMonth.getTime() <= end.getTime()) {
-            const col = Math.floor((firstOfMonth.getTime() - start.getTime()) / DAY_MS / 7)
-            months.push({ col, ts: firstOfMonth.getTime() })
+        const cursor = new Date(start.getFullYear(), start.getMonth(), 1)
+        while (dayOrdinal(cursor) <= endOrdinal) {
+          const ordinal = dayOrdinal(cursor)
+          if (ordinal >= startOrdinal) {
+            const col = Math.floor((ordinal - startOrdinal) / 7)
+            months.push({ col, ts: cursor.getTime() })
           }
           cursor.setMonth(cursor.getMonth() + 1)
         }
 
         return {
           start, end, weeks, today: toKey(today), byDay,
-          valueOf, dayVal, weekVal, cumAll, weekToDate, max,
+          valueOf, dayVal, weekVal, cumAll, max,
           maxWeek, unitWeekly, unitCum,
           months, totalDays,
         }
@@ -403,7 +398,7 @@ window.__ModuleLoader__.load({
           const v = model.weekVal(d)
           return v > 0 ? tt('tip.weekly', { md, v: fmt(v) }) : tt('tip.weekly.zero', { md })
         }
-        const v = model.weekToDate(d)
+        const v = model.cumAll(d)
         return v > 0 ? tt('tip.cum', { md, v: fmt(v) }) : tt('tip.cum.zero', { md })
       }
 
@@ -421,6 +416,15 @@ window.__ModuleLoader__.load({
       const onCellLeave = () => setHover(null)
 
       // ── 渲染 ──
+      const scan = data && data.scan
+      const scanNotice = scan && (scan.errors > 0 || scan.truncatedSessions > 0)
+        ? tt('foot.partial', {
+            checked: scan.sessions + scan.errors,
+            included: scan.sessions,
+            errors: scan.errors,
+            truncated: scan.truncatedSessions,
+          })
+        : null
       if (loading && !data) {
         return h('div', { className: 'dthm-section' },
           h('p', { className: 'dthm-title' }, tt('title')),
@@ -438,7 +442,8 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dthm-card' },
             error
               ? h('p', { className: 'dthm-status err' }, tt('error', { msg: error }))
-              : h('p', { className: 'dthm-status' }, tt('empty'))),
+              : h('p', { className: 'dthm-status' }, tt('empty')),
+            scanNotice ? h('p', { className: 'dthm-status' }, scanNotice) : null),
         )
       }
 
@@ -456,15 +461,13 @@ window.__ModuleLoader__.load({
       const fillOf = (v, unit) => (v <= 0 ? 0 : Math.min(7, Math.ceil(v / (unit || 1))))
       if (tab === 'weekly') {
         for (let col = 0; col < model.weeks; col++) {
-          const wv = model.weekVal(new Date(model.start.getTime() + col * 7 * DAY_MS))
+          const wv = model.weekVal(addDays(model.start, col * 7))
           colFills.push(fillOf(wv, model.unitWeekly))
         }
       } else if (tab === 'cum') {
         for (let col = 0; col < model.weeks; col++) {
-          const lastD = new Date(Math.min(
-            model.start.getTime() + (col * 7 + 6) * DAY_MS,
-            model.end.getTime(),
-          ))
+          const candidate = addDays(model.start, col * 7 + 6)
+          const lastD = dayOrdinal(candidate) > dayOrdinal(model.end) ? model.end : candidate
           colFills.push(fillOf(model.cumAll(lastD), model.unitCum))
         }
       }
@@ -475,9 +478,9 @@ window.__ModuleLoader__.load({
       }
       for (let col = 0; col < model.weeks; col++) {
         for (let row = 0; row < 7; row++) {
-          const d = new Date(model.start.getTime() + (col * 7 + row) * DAY_MS)
+          const d = addDays(model.start, col * 7 + row)
           const key = toKey(d)
-          const future = d.getTime() > model.end.getTime()
+          const future = key > model.today
           let style
           let interactive = true
           if (tab === 'daily') {
@@ -621,7 +624,7 @@ window.__ModuleLoader__.load({
         // 更新时间 + 颜色图例：独立成行，位于热力图矩阵下方（不内联在卡片内）
         h('div', { className: 'dthm-foot' },
           h('span', { className: 'dthm-status' },
-            loading ? tt('foot.updating') : (updatedAt ? tt('foot.updated', { time: updatedAt }) : '')),
+            scanNotice || (loading ? tt('foot.updating') : (updatedAt ? tt('foot.updated', { time: updatedAt }) : ''))),
           tab === 'daily'
             ? h('span', { className: 'dthm-legend' },
                 h('span', null, tt('legend.less')),
@@ -648,12 +651,12 @@ window.__ModuleLoader__.load({
       '<path fill-rule="evenodd" clip-rule="evenodd" d="M12.0997 8.54554C12.2905 8.54989 12.3541 8.58056 12.4535 8.74614L12.8849 9.46387C12.9851 9.63071 13.0464 9.66013 13.2388 9.66447H14.1138C14.3417 9.66448 14.3512 9.66937 14.4686 9.86507L14.892 10.5717C14.9942 10.7422 14.9948 10.8247 14.892 10.9961L14.4756 11.6906C14.3741 11.8677 14.3694 11.9379 14.4756 12.115L14.892 12.8096C14.9942 12.9801 14.9947 13.0625 14.892 13.234L14.4686 13.9406C14.3643 14.1028 14.3063 14.1354 14.1138 14.1412H13.2388C13.0465 14.1456 12.985 14.1752 12.8849 14.3418L12.4535 15.0595C12.353 15.2195 12.2895 15.2558 12.0997 15.2601H11.2237C10.9962 15.2601 10.9871 15.2548 10.8699 15.0595L10.4384 14.3418C10.3383 14.175 10.2767 14.1456 10.0846 14.1412H9.2096C9.01854 14.1355 8.95761 14.1006 8.85477 13.9406L8.43139 13.234C8.32562 13.0576 8.33148 12.9862 8.43139 12.8096L8.84771 12.115C8.95165 11.9416 8.94659 11.863 8.84771 11.6906L8.43139 10.9961C8.32767 10.8232 8.33411 10.7437 8.43139 10.5717L8.85477 9.86507C8.95447 9.69891 9.01875 9.67017 9.2096 9.66447H10.0846C10.2741 9.66441 10.3414 9.62547 10.4384 9.46387L10.8699 8.74614C10.987 8.55106 10.9963 8.54554 11.2237 8.54554H12.0997ZM11.6612 10.232C11.3326 10.7798 10.8155 11.0948 10.1743 11.106C10.4443 11.61 10.4425 12.1976 10.1743 12.6987C10.803 12.7096 11.3391 13.0359 11.6612 13.5727C11.9855 13.0323 12.5131 12.7098 13.148 12.6987C12.879 12.196 12.8789 11.6086 13.148 11.106C12.5076 11.0948 11.9894 10.7794 11.6612 10.232Z" fill="currentColor"/>' +
       '<path fill-rule="evenodd" clip-rule="evenodd" d="M7.51205 0.790627C9.19055 0.790649 10.7401 1.0691 11.892 1.54364C12.4664 1.78029 12.9719 2.07885 13.3436 2.4408C13.7171 2.80467 13.9916 3.27253 13.9918 3.82384V7.90442C13.6067 7.69532 13.1907 7.53597 12.7529 7.43366V5.66454C12.4928 5.82898 12.2028 5.97601 11.892 6.10405C10.74 6.57865 9.19071 6.85706 7.51205 6.85706C5.8337 6.85703 4.285 6.57852 3.13309 6.10405C2.82215 5.97593 2.53164 5.8291 2.27121 5.66454V7.4135C2.27134 7.75678 2.6066 8.27106 3.62502 8.73405C4.58641 9.17097 5.95762 9.45591 7.50499 9.45681C7.24582 9.83133 7.03684 10.2434 6.88706 10.6826C5.44388 10.6162 4.12516 10.3216 3.11192 9.86104C2.81708 9.72698 2.53185 9.56866 2.27121 9.38928V11.2542C2.27158 11.5974 2.60697 12.1109 3.62502 12.5737C4.41933 12.9347 5.4937 13.1898 6.71569 13.2693C6.80349 13.7128 6.9513 14.1345 7.14814 14.5273C5.60324 14.4862 4.18593 14.1889 3.11192 13.7007C2.01039 13.1998 1.03366 12.3814 1.03333 11.2542V3.82384C1.03352 3.27273 1.30721 2.80461 1.68049 2.4408C2.05211 2.07893 2.55887 1.78026 3.13309 1.54364C4.28492 1.06926 5.83393 0.790683 7.51205 0.790627ZM7.51205 2.02851C5.95492 2.02857 4.57354 2.29079 3.60486 2.68979C3.11958 2.88977 2.76667 3.11253 2.5454 3.32788C2.32671 3.54101 2.2714 3.7089 2.27121 3.82384C2.27121 3.93882 2.32624 4.10625 2.5454 4.3198C2.76667 4.53527 3.11927 4.75781 3.60486 4.9579C4.5736 5.35699 5.95467 5.61914 7.51205 5.61918C9.06942 5.61918 10.4505 5.35695 11.4192 4.9579C11.9051 4.75773 12.2584 4.53536 12.4797 4.3198C12.6988 4.10627 12.7529 3.93882 12.7529 3.82384C12.7527 3.70889 12.6984 3.54104 12.4797 3.32788C12.2584 3.11239 11.9049 2.88989 11.4192 2.68979C10.4505 2.29079 9.06925 2.02853 7.51205 2.02851Z" fill="currentColor"/>'
 
-    function patchNavIcon() {
+    function patchNavIcon(translate) {
       const dialog = document.querySelector('[role="dialog"]')
       if (!dialog) return
       const buttons = dialog.querySelectorAll('button')
       for (const btn of buttons) {
-        if (btn.textContent.trim() !== tt('title')) continue
+        if (btn.textContent.trim() !== translate('title')) continue
         const svg = btn.querySelector('svg')
         if (!svg || svg.dataset.dshTokenUsageNavicon !== undefined) continue
         const fresh = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -671,53 +674,39 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      ensureCss()
-
-      // ── 语言跟随：DSH 语言走内部 store，不写 documentElement.lang；插件 i18n 以
-      // documentElement.lang 为源，因此订阅 locale/change 事件把它同步过去（组件内
-      // MutationObserver 监听 lang 属性自动重渲染；section label / 图标也是实时求值）。
-      try {
-        const snap = ctx.locale && typeof ctx.locale.getLocale === 'function' ? ctx.locale.getLocale() : null
-        if (snap && snap.active && document.documentElement.lang !== snap.active) {
-          document.documentElement.lang = snap.active
-        }
-        ctx.on('locale/change', (s) => {
-          if (s && s.active && document.documentElement.lang !== s.active) {
-            document.documentElement.lang = s.active
-          }
-        })
-      } catch (error) {
-        console.warn('[dsh-token-usage] locale sync unavailable:', error)
-      }
-
-      ctx.slots.inject('settings.section', () => ctx.slots.register({
+      const t = ctx.locale.bind('dsh-token-usage')
+      ctx.effect(() => ensureCss(), 'dsh-token-usage: styles')
+      ctx.effect(
+        () => ctx.locale.register('dsh-token-usage', I18N),
+        'dsh-token-usage: translations',
+      )
+      ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
         id: 'dsh-token-usage',
         order: 85,
-        label: () => tt('title'),
-      }, HeatmapSection))
+        label: () => t('title'),
+        locale: 'dsh-token-usage',
+      }, HeatmapSection)), 'dsh-token-usage: settings section')
 
-      // 侧边栏图标微替换（设置面板打开/重建时自愈；失败只影响图标，绝不影响 GUI）
-      let scheduled = false
-      const schedule = () => {
-        if (scheduled) return
-        scheduled = true
-        requestAnimationFrame(() => {
-          scheduled = false
-          try { patchNavIcon() } catch { /* 图标替换失败可忽略 */ }
-        })
-      }
-      const observer = new MutationObserver(schedule)
-      try {
+      // The current settings slot has no icon field, so keep the small visual
+      // replacement scoped to this plugin's effect and dispose it on unload.
+      ctx.effect(() => {
+        let frame = null
+        const schedule = () => {
+          if (frame !== null) return
+          frame = requestAnimationFrame(() => {
+            frame = null
+            try { patchNavIcon(t) } catch { /* icon replacement is decorative */ }
+          })
+        }
+        const observer = new MutationObserver(schedule)
         observer.observe(document.body, { childList: true, subtree: true })
         schedule()
-      } catch (error) {
-        console.warn('[dsh-token-usage] nav icon patch unavailable:', error)
-      }
-
-      return () => {
-        observer.disconnect()
-      }
+        return () => {
+          observer.disconnect()
+          if (frame !== null) cancelAnimationFrame(frame)
+        }
+      }, 'dsh-token-usage: settings icon')
     }
 
     return { name, inject, apply }

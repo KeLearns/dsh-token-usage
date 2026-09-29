@@ -5,7 +5,7 @@
 #   dsh plugin --profile web add link:<this-directory>   (local development)
 #
 # The row is a bare plugin by package name: the node half (exports ".") runs
-# in the host process (session-log scanning, /dsh-token-usage routes), and the
+# in the host process (SessionPersistence reads, /dsh-token-usage routes), and the
 # dsh.client declaration in package.json makes the browser half
 # (exports "./client") load in the web GUI (settings sidebar entry).
 - insert:

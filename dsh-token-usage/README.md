@@ -10,6 +10,7 @@ Token usage heatmap for the DeepSeek Harness (dsh) web GUI — a GitHub-style
 contribution graph for daily / weekly / cumulative token consumption, with a
 summary bubble, hover details, and activity insights. Mounted through the
 official dsh plugin mechanism (`dsh plugin add`) — no dsh source changes.
+Targets the DSH 0.2.0-rc.2 API surface.
 
 A "Token Activity" entry appears in the settings sidebar.
 
@@ -41,14 +42,16 @@ A "Token Activity" entry appears in the settings sidebar.
 - **Window switch** — last 3 / 6 / 12 months (default 12); fixed 12px cells,
   12-month view scrolls horizontally and auto-scrolls to the latest week;
 - **Hover details** — hovering a cell shows that day's total, that week's
-  total, or the week-to-date cumulative as of that day (localized zh/en);
+  total, or the cumulative total through that day (localized zh/en);
 - **Activity insights** — most used model / reasoning effort / tool, peak
-  hour, daily & monthly averages, most active weekday, most active day;
+  hour, averages per active day / month, most active weekday, most active day;
+  activity rankings count recorded calls, not tokens;
   sorted by label length, two equal columns with a continuous center divider;
-- **i18n** — zh / en, follows the document language live;
+- **i18n** — zh / en, registered through DSH's locale service;
 - **Themes** — light & dark palettes, follows the dsh application theme;
-- **Auto refresh** — re-scans changed session files every 60s and on focus;
-- **Cross-platform** — pure Node stdlib on the host side (`fs` / `path` / `os` / `zlib`), works on Windows, macOS and Linux; the browser half is platform-agnostic.
+- **Auto refresh** — the page refreshes every 60 seconds; the host checks session revisions every 5 minutes by default;
+- **Storage independent** — reads logical session events through DSH's public `SessionPersistence` service, not JSONL files;
+- **Cross-platform** — works wherever the DSH web GUI runs; no direct filesystem or compression access.
 
 ## Install (official mechanism)
 
@@ -88,7 +91,7 @@ dsh plugin --profile web remove @kelearns/dsh-token-usage
 
 1. Put the package into the profile node_modules:
    `$DSH_HOME/profiles/web/node_modules/@kelearns/dsh-token-usage`;
-2. Append this block to `$DSH_HOME/cordis.patch.yml` (idempotent):
+2. Append this block to `$DSH_HOME/profiles/web/cordis.patch.yml` (idempotent):
 
 ```yaml
 - insert:
@@ -100,24 +103,30 @@ dsh plugin --profile web remove @kelearns/dsh-token-usage
 
 ## Data source
 
-`$DSH_HOME`/sessions/<workspace>/<session-id>/session.jsonl.zstd
-(the official dsh JSONL persistence: concatenated zstd frames; first line is
-the session header, followed by the event stream).
+The plugin uses `ctx.sessionPersistence.list()` and read-only session handles.
+DSH selects and migrates the current logical session format before exposing
+events, so the plugin does not depend on filenames, compression, or the
+configured persistence backend.
 
-Token usage is folded from `assistant/chunk` events with
-`chunk.type === "usage"` (`usage { inputTokens, outputTokens, cacheReadTokens }`)
-attributed to local days by event `time` (epoch ms). Total = input + output + cache read.
-Insights additionally read `request/header` (model / reasoning effort),
-`tool/call` (tools) and usage timestamps (peak hour / weekday).
+Successful model calls contribute `assistant/message.data.usage`; failed or
+retried calls contribute the latest usage chunk in `assistant/attempt.data.stream`.
+Compaction model calls contribute `compaction/summary.data.usage` when present;
+released `assistant/chunk` usage events are also understood. Embedded stream
+timestamps are used when available, with the settlement event time as fallback.
+Total tokens are input + output + cache-read + cache-write tokens; DSH reports
+these four counts as disjoint fields, while reasoning tokens are an output
+subset. Insights also read `request/header` and `tool/call`; their averages use
+days and months with reported usage.
 
-Per-file results are cached by `(size, mtimeMs)`; rescans only re-decode
-changed (active) sessions.
+Per-session folds are cached by DSH's opaque persistence revision. A scan
+re-reads only changed sessions. To bound work, it scans at most the 20,000
+most recently created sessions and reports when older sessions were omitted.
 
 ## Routes (same-origin)
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /dsh-token-usage/stats | Full statistics: `{ totals, stats, insights, today, days:[{d,i,o,c,a}], scan }` |
+| GET | /dsh-token-usage/stats | Full statistics: `{ totals, stats, insights, today, days:[{d,i,o,c,w,a}], scan }` |
 | POST | /dsh-token-usage/refresh | Force cache invalidation and rescan |
 | GET | /dsh-token-usage/status | Cache / last scan state |
 
@@ -135,16 +144,15 @@ changed (active) sessions.
 
 ```powershell
 node test/mock.test.mjs                                   # synthetic full pipeline
-node test/mock.test.mjs "$env:USERPROFILE\.dsh"  # real-data smoke (any DSH_HOME)
 node test/layout-algo.mjs                                  # layout algorithm matrix
 ```
 
 ## Known limitations
 
-- Counts sessions that carry usage events (dsh session log format, verified on 0.1.0-rc.6);
-- Days are attributed in the process local timezone; weeks start on Monday;
-- zstd decompression requires Node >= 22.2 (satisfied by the official dsh runtime);
-- Missing/unreadable session directories yield empty statistics without affecting the GUI.
+- Sessions with no reported usage contribute no token counts; unreadable sessions are counted in `scan.errors`;
+- Days are attributed in the host process's local timezone; weeks start on Monday;
+- DSH's `SessionPersistence.list()` is unpaginated; this plugin caps each scan at the 20,000 most recently created sessions and shows a warning when it does;
+- The plugin requires the `sessionPersistence` service to be mounted in the Web profile.
 
 ## License
 

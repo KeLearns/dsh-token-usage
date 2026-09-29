@@ -5,6 +5,7 @@
 DeepSeek Harness（dsh）Web GUI 的 Token 用量热力图插件：GitHub 风格贡献图，
 统计每日 / 每周 / 累计 token 用量，带汇总气泡、悬停详情与活动洞察。
 通过官方插件机制（`dsh plugin add`）挂载，不修改 dsh 本体任何源码。
+适配 DSH `0.2.0-rc.2` 的插件 API。
 
 安装后在设置页侧边栏出现「Token 活动」入口。
 
@@ -31,12 +32,13 @@ DeepSeek Harness（dsh）Web GUI 的 Token 用量热力图插件：GitHub 风格
 - **汇总气泡**：单个圆角容器 + 竖线分割的 5 项统计（累计 / 峰值日 / 最长会话 / 当前连续 / 最长连续天数）；
 - **三种视图**：每日（按天分级取色）、每周（周总量 ÷ (最大周/7) 得格数，底部堆叠、统一最深色）、累计（截止各周累计 ÷ (总量/7) 得格数，最新列必满 7 格）；
 - **窗口切换**：近 3 / 6 / 12 个月（默认 12）；固定 12px 方格，12 个月横向滚动并自动滚到最新一周；
-- **悬停详情**：「M月D日 使用了 X 个 Token」/「当周使用了 X 个 Token」/「截至 X 当周累计使用 X 个 Token」；
-- **活动洞察**：最常使用的模型 / 推理强度 / 工具、最活跃时段、日均与月均用量、最常用的星期、最活跃的一天；按标签字数排序，两列等宽 + 连续中心分界线；
-- **i18n**：中 / 英文，跟随文档语言实时切换；
+- **悬停详情**：「M月D日 使用了 X 个 Token」/「当周使用了 X 个 Token」/「截至 X 的已纳入历史累计使用 X 个 Token」；
+- **活动洞察**：最常使用的模型 / 推理强度 / 工具、最活跃时段、活跃日均与活跃月均用量、最常用的星期、最活跃的一天；频次按调用次数统计，不按 Token 加权；
+- **i18n**：中 / 英文，通过 DSH locale 服务注册并随应用语言切换；
 - **主题**：浅色 / 深色双色阶，跟随 DSH 应用主题；
-- **自动刷新**：每 60s 与回到前台时增量重扫变化中的会话文件；
-- **跨平台**：host 半端纯 Node 标准库（`fs` / `path` / `os` / `zlib`），Windows / macOS / Linux 通用；浏览器半端与平台无关。
+- **自动刷新**：页面每 60 秒更新；host 默认每 5 分钟检查会话 revision，只重读已变化的会话；
+- **存储无关**：通过 DSH 公共 `SessionPersistence` 服务读取逻辑事件，不直接扫描文件；
+- **跨平台**：适用于 DSH Web GUI 支持的平台，不依赖文件系统或压缩后端。
 
 ## 安装（官方机制）
 
@@ -74,7 +76,7 @@ dsh plugin --profile web remove @kelearns/dsh-token-usage
 
 1. 把包放入 profile 的 node_modules：
    `$DSH_HOME/profiles/web/node_modules/@kelearns/dsh-token-usage`；
-2. 在 `$DSH_HOME/cordis.patch.yml` 追加以下块（幂等）：
+2. 在 `$DSH_HOME/profiles/web/cordis.patch.yml` 追加以下块（幂等）：
 
 ```yaml
 - insert:
@@ -86,22 +88,30 @@ dsh plugin --profile web remove @kelearns/dsh-token-usage
 
 ## 数据来源
 
-`$DSH_HOME`/sessions/<workspace>/<session-id>/session.jsonl.zstd
-（DSH 官方 JSONL 持久化：多个 zstd 帧首尾相连；首行 session 头，后续为事件流）。
+插件通过 `ctx.sessionPersistence.list()` 和只读会话句柄读取事件。DSH 负责
+选择并迁移逻辑会话格式，因此插件不依赖文件名、压缩格式或具体持久化后端。
 
-聚合 `assistant/chunk` 事件中 `chunk.type === "usage"` 的
-`usage { inputTokens, outputTokens, cacheReadTokens }`，按事件 `time`
-（epoch ms）以进程本地时区归入自然日。总量 = 输入 + 输出 + 缓存命中。
-活动洞察额外读取 `request/header`（模型 / 推理强度）、`tool/call`（工具）
-与 usage 时间戳（最活跃时段 / 星期）。
+成功调用统计 `assistant/message.data.usage`（若缺失则取其 stream 中最后一条
+usage）；重试/失败 attempt 统计 `assistant/attempt.data.stream` 的最后一条 usage。
+每个 settlement 对应一个已报告的模型调用，因此 attempt 与最终 message 会分别计入。
+压缩摘要模型调用在 `compaction/summary.data.usage` 存在时计入；旧版
+`assistant/chunk` usage 事件也保留兼容。优先使用 stream 时间戳；没有时使用
+settlement 事件时间，并按 host 本地时区归日。
 
-按 `(size, mtimeMs)` 缓存已解析会话，重扫只增量解码变化中的文件。
+总量 = input + output + cache-read + cache-write。DSH 将这四项作为互斥计数；
+`reasoningTokens` 是 output 的子集，不重复加入总量。模型/工具/时段洞察按
+事件次数统计；活跃日均与活跃月均只除以有用量的活跃日/月。
+
+会话聚合结果按 DSH 提供的 opaque revision 缓存；扫描只重读变化的会话。为限制
+单次工作量，每次最多扫描创建时间最新的 20,000 个会话；有读取失败或更早会话
+未扫描时，界面会显示部分统计提示。累计视图按已纳入的全部历史累计，3/6/12 月
+选项只改变可见窗口；悬停数值与热力格使用相同的截止当日累计口径。
 
 ## 路由（同源）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /dsh-token-usage/stats | 全量统计：`{ totals, stats, insights, today, days:[{d,i,o,c,a}], scan }` |
+| GET | /dsh-token-usage/stats | 全量统计：`{ totals, stats, insights, today, days:[{d,i,o,c,w,a}], scan }` |
 | POST | /dsh-token-usage/refresh | 强制失效缓存并重扫 |
 | GET | /dsh-token-usage/status | 缓存 / 最近扫描状态 |
 
@@ -119,16 +129,16 @@ dsh plugin --profile web remove @kelearns/dsh-token-usage
 
 ```powershell
 node test/mock.test.mjs                                   # 合成数据全链路
-node test/mock.test.mjs "$env:USERPROFILE\.dsh"  # 真实数据冒烟（任意 DSH_HOME）
 node test/layout-algo.mjs                                  # 排布算法矩阵验证
 ```
 
 ## 已知边界
 
-- 只统计有 usage 事件的会话（DSH 会话日志格式，0.1.0-rc.6 实测兼容）；
-- 时间按进程本地时区归日；周以周一为一周开始；
-- zstd 解压依赖 Node >= 22.2（官方 dsh 运行时满足）；
-- 会话目录不存在/无权限时返回空统计，不影响 GUI。
+- 没有 provider usage 的会话不贡献 Token 数，但仍计入已扫描会话数；
+- 压缩摘要只在事件包含 `usage` 时计入；
+- 时间按 host 本地时区归日；周以周一为一周开始；
+- `SessionPersistence.list()` 未分页，插件只纳入创建时间最新的 20,000 个会话，并在界面提示截断；
+- 持久化服务不可用时统计接口会返回错误；单个会话读取失败会显示在部分统计提示中。
 
 ## License
 

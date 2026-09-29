@@ -1,124 +1,160 @@
-// dsh-token-usage host 半端测试：mock ctx + 合成会话数据 + 真实会话数据
-// 运行：node test/mock.test.mjs [真实DSH_HOME]
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { zstdCompressSync } from 'node:zlib'
+// dsh-token-usage host test: mock SessionPersistence + synthetic current and legacy events
+// Run: node test/mock.test.mjs
 import { apply } from '../index.js'
 
 let failures = 0
-const assert = (cond, msg) => {
-  if (cond) console.log('  PASS:', msg)
-  else { failures++; console.error('  FAIL:', msg) }
+const assert = (condition, message) => {
+  if (condition) console.log('  PASS:', message)
+  else { failures++; console.error('  FAIL:', message) }
 }
 
-// ── mock ctx ──
-function makeCtx() {
-  const routes = []
-  const ctx = {
-    routes,
-    setInterval: () => () => {},
-    webServer: {
-      register: (spec) => {
-        routes.push(spec)
-        return () => { const i = routes.indexOf(spec); if (i >= 0) routes.splice(i, 1) }
-      },
-    },
-  }
-  return ctx
+function event(type, time, data) {
+  return { type, seq: 0, time, data }
 }
-async function invoke(route, req) {
+
+function usage(inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) {
+  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }
+}
+
+const T1 = new Date(2026, 6, 13, 10, 0, 0).getTime() // Monday
+const T2 = new Date(2026, 6, 13, 11, 0, 0).getTime()
+const T3 = new Date(2026, 6, 14, 9, 0, 0).getTime()
+const T4 = new Date(2026, 6, 14, 9, 30, 0).getTime()
+
+const sessions = [
+  {
+    header: { id: 'sess-a', createdAt: T1 },
+    events: [
+      event('assistant/message', T1, {
+        turn: 1, step: 1, stream: [], message: { content: [] },
+        usage: usage(1000, 500, 200, 100),
+      }),
+      // Retained historical vocabulary; the current persistence service may
+      // migrate legacy files before they reach a consumer.
+      event('assistant/chunk', T2, {
+        turn: 1, step: 1,
+        chunk: { type: 'usage', usage: usage(2000, 300, 100, 50) },
+      }),
+    ],
+  },
+  {
+    header: { id: 'sess-b', createdAt: T3 },
+    events: [
+      event('assistant/attempt', T3, {
+        turn: 1,
+        step: 1,
+        stream: [
+          { type: 'chunk', time: T3 - 1, chunk: { type: 'usage', usage: usage(9999, 9999, 9999, 9999) } },
+          { type: 'chunk', time: T3, chunk: { type: 'usage', usage: usage(4000, 700, 50, 25) } },
+        ],
+      }),
+      event('compaction/summary', T4, {
+        compactionId: 'compact-1',
+        provider: 'mock',
+        model: 'mock-model',
+        summary: [],
+        usage: usage(40, 20, 5, 10),
+      }),
+    ],
+  },
+  // A session with no usage is still a successfully scanned session.
+  { header: { id: 'sess-empty', createdAt: T4 + 1 }, events: [] },
+]
+
+const snapshots = sessions.map((session) => ({
+  header: session.header,
+  revision: `revision:${session.header.id}:1`,
+  eventCount: session.events.length,
+}))
+const disposers = []
+const routes = []
+const ctx = {
+  routes,
+  effect(setup) {
+    const dispose = setup()
+    if (typeof dispose === 'function') disposers.push(dispose)
+    return dispose
+  },
+  interval(callback) {
+    void callback
+    const dispose = () => {}
+    disposers.push(dispose)
+    return dispose
+  },
+  webServer: {
+    register(spec) {
+      routes.push(spec)
+      return () => {
+        const index = routes.indexOf(spec)
+        if (index >= 0) routes.splice(index, 1)
+      }
+    },
+  },
+  sessionPersistence: {
+    identity: Symbol('test persistence'),
+    async list() { return snapshots },
+    async open(id, access) {
+      if (access !== 'read') throw new Error('test only supports read handles')
+      const session = sessions.find((item) => item.header.id === id)
+      if (!session) throw new Error(`unknown session: ${id}`)
+      let closed = false
+      return {
+        async read(offset = 0, length = Number.MAX_SAFE_INTEGER, options = {}) {
+          options.signal?.throwIfAborted()
+          if (closed) throw new Error('handle closed')
+          return { eventState: 'owned', events: session.events.slice(offset, offset + length) }
+        },
+        async close() { closed = true },
+      }
+    },
+  },
+}
+
+async function invoke(route, req = {}) {
   let status = 0
   let body = ''
   const res = {
-    writeHead: (s) => { status = s },
-    end: (b) => { body = b },
+    writeHead(value) { status = value },
+    end(value) { body = value },
   }
   await route.handler(req, res)
   return { status, body: JSON.parse(body) }
 }
 
-// ── 合成数据：两个会话（zstd + 明文 jsonl），时间固定 ──
-const T1 = new Date(2026, 6, 13, 10, 0, 0).getTime() // 2026-07-13 周一
-const T2 = new Date(2026, 6, 13, 11, 0, 0).getTime()
-const T3 = new Date(2026, 6, 14, 9, 0, 0).getTime() // 2026-07-14
-const usageEvent = (time, input, output, cache) =>
-  JSON.stringify({ type: 'assistant/chunk', seq: 1, time, data: { turn: 1, step: 1, chunk: { type: 'usage', usage: { inputTokens: input, outputTokens: output, cacheReadTokens: cache } } } })
-const header = (id, createdAt) =>
-  JSON.stringify({ type: 'session', version: 0, id, createdAt, cwd: '/tmp', agentPreset: 'standard' })
-
-const logA = [header('sess-a', T1), usageEvent(T1, 1000, 500, 200), usageEvent(T2, 2000, 300, 100)].join('\n')
-const logB = [header('sess-b', T3), usageEvent(T3, 4000, 700, 50)].join('\n')
-
-const home = mkdtempSync(join(tmpdir(), 'dsh-token-usage-test-'))
-const dirA = join(home, 'sessions', 'ws-a', 'sess-a')
-const dirB = join(home, 'sessions', 'ws-b', 'sess-b')
-mkdirSync(dirA, { recursive: true })
-mkdirSync(dirB, { recursive: true })
-writeFileSync(join(dirA, 'session.jsonl.zstd'), zstdCompressSync(Buffer.from(logA, 'utf8')))
-writeFileSync(join(dirB, 'session.jsonl'), logB) // 明文回退路径
-
-const oldHome = process.env.DSH_HOME
-process.env.DSH_HOME = home
 try {
-  const ctx = makeCtx()
-  const dispose = apply(ctx, {}, {})
-  const stats = ctx.routes.find((r) => r.path === '/dsh-token-usage/stats')
-  assert(!!stats, 'stats 路由已注册')
-  const { status, body } = await invoke(stats, {})
-  assert(status === 200, 'stats 返回 200')
-  assert(body.ok === true, 'ok 字段')
-  const d = body.data
-  console.log('  真实聚合:', JSON.stringify(d.totals), 'days=', JSON.stringify(d.days))
-  assert(d.totals.input === 7000 && d.totals.output === 1500 && d.totals.cacheRead === 350, '总量 = 输入7000/输出1500/缓存350')
-  assert(d.totals.all === 8850, '总用量 8850')
-  assert(d.days.length === 2, '两个自然日')
-  assert(d.days[0].d === '2026-07-13' && d.days[0].a === 4100, '7-13 合计 4100')
-  assert(d.days[1].d === '2026-07-14' && d.days[1].a === 4750, '7-14 合计 4750')
-  assert(d.scan.sessions === 2, '扫描到 2 个会话')
-  assert(typeof d.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.today), 'today 格式')
-  assert(d.stats.peakDay.d === '2026-07-14' && d.stats.peakDay.a === 4750, '峰值日 = 7-14 (4750)')
-  assert(d.stats.longestSessionMs === 3600000, '最长会话时长 = 1 小时（T1→T2）')
-  assert(d.stats.longestStreak === 2, '最长连续天数 = 2')
-  assert(d.stats.activeDays === 2, '活跃天数 = 2')
-  // 缓存命中路径
-  const { body: body2 } = await invoke(stats, {})
-  assert(body2.data.scan.filesCached === 2, '二次扫描全部缓存命中')
-  // 强制刷新
-  const refresh = ctx.routes.find((r) => r.path === '/dsh-token-usage/refresh')
-  const { body: body3 } = await invoke(refresh, {})
-  assert(body3.data.scan.filesScanned === 2, '强制刷新重扫 2 个文件')
-  dispose()
+  apply(ctx)
+  const statsRoute = routes.find((route) => route.path === '/dsh-token-usage/stats')
+  assert(!!statsRoute, 'stats route registered')
+  const { status, body } = await invoke(statsRoute)
+  assert(status === 200, 'stats returns 200')
+  assert(body.ok === true, 'ok field')
+  const data = body.data
+  console.log('  totals:', JSON.stringify(data.totals), 'days=', JSON.stringify(data.days))
+  assert(data.totals.input === 7040, 'input includes successful, retried, legacy, and compaction usage')
+  assert(data.totals.output === 1520, 'output includes every reported model call')
+  assert(data.totals.cacheRead === 355, 'cache-read tokens included')
+  assert(data.totals.cacheWrite === 185, 'cache-write tokens included')
+  assert(data.totals.all === 9100, 'total sums the four disjoint token buckets')
+  assert(data.days.length === 2, 'two local calendar days')
+  assert(data.days[0].d === '2026-07-13' && data.days[0].a === 4250, 'July 13 total includes the final and legacy events')
+  assert(data.days[1].d === '2026-07-14' && data.days[1].a === 4850, 'July 14 total includes retry and compaction usage')
+  assert(data.scan.sessions === 3, 'empty session is counted as scanned')
+  assert(data.scan.errors === 0, 'no session read errors')
+  assert(typeof data.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.today), 'today format')
+  assert(data.stats.peakDay.d === '2026-07-14' && data.stats.peakDay.a === 4850, 'peak day is July 14')
+  assert(data.stats.longestSessionMs === 3600000, 'longest session duration is one hour')
+  assert(data.stats.longestStreak === 2, 'longest active streak is two days')
+  assert(data.stats.activeDays === 2, 'two active days')
+
+  const { body: cached } = await invoke(statsRoute)
+  assert(cached.data.scan.sessionsScanned === 0 && cached.data.scan.sessionsCached === 3, 'unchanged session revisions hit cache')
+
+  const refreshRoute = routes.find((route) => route.path === '/dsh-token-usage/refresh')
+  const { body: refreshed } = await invoke(refreshRoute)
+  assert(refreshed.data.scan.sessionsScanned === 3, 'forced refresh rereads all sessions')
 } finally {
-  process.env.DSH_HOME = oldHome
-  rmSync(home, { recursive: true, force: true })
+  for (const dispose of disposers.reverse()) dispose()
 }
 
-// ── 真实数据（可选参数指定 DSH_HOME）──
-const realHome = process.argv[2]
-if (realHome) {
-  console.log('\n=== 真实数据扫描:', realHome, '===')
-  const old = process.env.DSH_HOME
-  process.env.DSH_HOME = realHome
-  try {
-    const ctx = makeCtx()
-    const dispose = apply(ctx, {}, {})
-    const stats = ctx.routes.find((r) => r.path === '/dsh-token-usage/stats')
-    const t0 = Date.now()
-    const { status, body } = await invoke(stats, {})
-    const d = body.data
-    console.log('状态:', status, '耗时:', Date.now() - t0, 'ms')
-    console.log('scan:', JSON.stringify(d.scan))
-    console.log('totals:', JSON.stringify(d.totals))
-    console.log('days:', d.days.length, '第一条:', JSON.stringify(d.days[0]), '最后一条:', JSON.stringify(d.days[d.days.length - 1]))
-    console.log('近 7 天:', JSON.stringify(d.days.slice(-7)))
-    assert(status === 200 && d.ok !== false, '真实数据 stats 可读')
-    assert(d.totals.all > 0, '真实累计用量 > 0')
-    dispose()
-  } finally {
-    process.env.DSH_HOME = old
-  }
-}
-
-console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} FAILURES`)
+console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECKS FAILED`)
 process.exit(failures === 0 ? 0 : 1)
