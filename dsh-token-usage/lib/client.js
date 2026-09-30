@@ -489,7 +489,7 @@ window.__ModuleLoader__.load({
       const max = Math.max(1, model.max)
       const levelOf = (v) => (v <= 0 ? 0 : Math.min(5, Math.ceil((5 * v) / max)))
       const cellStyle = (bg) => ({ width: CELL, height: CELL, background: bg })
-      // 每周/累计视图：列内从底部（周日行=row6）向上堆叠 fillCount 格，颜色统一最深色
+      // 每周/累计视图：每列始终显示 7 个底格，再从底部向上填充，颜色统一最深色
       // 每日视图：逐日按 level 分级取色，未来格透明
       const colFills = []
       // 无使用量的列不占格（整列零值色）；有量则 1~7 格
@@ -526,11 +526,6 @@ window.__ModuleLoader__.load({
             const fill = colFills[col]
             const lit = row >= 7 - fill
             style = lit ? cellStyle(scale[5]) : cellStyle(scale[0])
-            if (future && !lit) {
-              // 未来且未填到：不渲染（保持透明），不可悬停
-              style = undefined
-              interactive = false
-            }
           }
           const cls = 'dthm-cell' + (key === todayKey ? ' today' : '')
           cells.push(
